@@ -3,15 +3,12 @@ import {
   FastifyReply,
   FastifyRequest,
   FastifyInstance,
-  RawServerBase,
-  RawRequestDefaultExpression,
-  RawReplyDefaultExpression,
-  FastifyPlugin,
 } from "fastify";
 import {
   DocumentNode,
   ExecutionResult,
   GraphQLSchema,
+  GraphQLError,
   Source,
   GraphQLResolveInfo,
   GraphQLIsTypeOfFn,
@@ -66,7 +63,19 @@ interface QueryRequest {
   extensions?: object;
 }
 
-export interface FastifyGQLOptions {
+export interface FastifyGQLGatewayOptions {
+  /**
+   * A list of GraphQL services to be combined into the gateway schema
+   */
+  gateway: {
+    services: Array<{
+      name: string;
+      url: string;
+    }>;
+  };
+}
+
+export interface FastifyGQLSchemaOptions {
   /**
    * The GraphQL schema. String schema will be parsed
    */
@@ -74,7 +83,7 @@ export interface FastifyGQLOptions {
   /**
    * Object with resolver functions
    */
-  resolvers: IResolvers;
+  resolvers?: IResolvers;
   /**
    * Object with data loader functions
    */
@@ -91,6 +100,9 @@ export interface FastifyGQLOptions {
       ) => any;
     };
   };
+}
+
+export interface FastifyGQLCommonOptions {
   /**
    * Serve GraphiQL on /graphiql if true or 'graphiql', or GraphQL IDE on /playground if 'playground' and if routes is true
    */
@@ -133,6 +145,18 @@ export interface FastifyGQLOptions {
         reply: FastifyReply
       ) => ExecutionResult);
   /**
+   * Change the default error formatter.
+   */
+  errorFormatter?: ((
+    error: FastifyError | GraphQLError | Error
+  ) => {
+    statusCode?: number
+    response?: {
+      data?: object
+      errors: any[]
+    }
+  });
+  /**
    * The maximum depth allowed for a single query.
    */
   queryDepth?: number;
@@ -159,15 +183,6 @@ export interface FastifyGQLOptions {
    */
   federationMetadata?: boolean;
   /**
-   * A list of GraphQL services to be combined into the gateway schema
-   */
-  gateway?: {
-    services: Array<{
-      name: string;
-      url: string;
-    }>;
-  };
-  /**
    * Persisted queries, overrides persistedQueryProvider.
    */
   persistedQueries?: object;
@@ -188,6 +203,7 @@ export interface FastifyGQLOptions {
   allowBatchedQueries?: boolean;
 }
 
+export type FastifyGQLOptions = FastifyGQLCommonOptions & (FastifyGQLGatewayOptions | FastifyGQLSchemaOptions)
 
 declare function fastifyGQL 
   (
@@ -228,7 +244,6 @@ declare namespace fastifyGQL {
     notSupportedError?: string;
   }
 
- 
 
   /**
    * Extended errors for adding additional information in error responses
