@@ -16,6 +16,8 @@ import {
   GraphQLScalarType,
   ValidationRule,
 } from "graphql";
+import { SocketStream } from "fastify-websocket"
+import { IncomingMessage, OutgoingHttpHeaders } from "http";
 
 declare interface FastifyGQLPlugin {
   /**
@@ -63,15 +65,20 @@ interface QueryRequest {
   extensions?: object;
 }
 
+type FastifyGQLGatewayService = {
+  name: string;
+  url: string;
+  mandatory?: boolean;
+}
+
 export interface FastifyGQLGatewayOptions {
   /**
    * A list of GraphQL services to be combined into the gateway schema
    */
   gateway: {
-    services: Array<{
-      name: string;
-      url: string;
-    }>;
+    services: Array<FastifyGQLGatewayService>;
+    pollingInterval?: number;
+    errorHandler?(error: Error, service: FastifyGQLGatewayService): void
   };
 }
 
@@ -174,9 +181,11 @@ export interface FastifyGQLCommonOptions {
     | {
         emitter?: object;
         verifyClient?: (
-          info: object,
-          next: (result: boolean) => void
-        ) => void;
+          info: { origin: string; secure: boolean; req: IncomingMessage }, 
+          next: (result: boolean, code?: number, message?: string, headers?: OutgoingHttpHeaders) => void
+        ) => void,
+        context?: (connection: SocketStream, request: FastifyRequest) => object | Promise<object>
+        onConnect?: (data: { type: "connection_init", payload: any }) => object | Promise<object>
       };
   /**
    * Enable federation metadata support so the service can be deployed behind an Apollo Gateway

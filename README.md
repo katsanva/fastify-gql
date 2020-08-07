@@ -362,6 +362,41 @@ app.register(GQL, {
 })
 ```
 
+### Build a custom GraphQL context object for subscriptions
+
+```js
+...
+const resolvers = {
+  Mutation: {
+    sendMessage: async (_, { message, userId }, { pubsub }) => {
+      await pubsub.publish({
+        topic: userId,
+        payload: message
+      })
+
+      return "OK"
+    }
+  },
+  Subscription: {
+    receivedMessage: {
+      // If someone calls the sendMessage mutation with the Id of the user that was added
+      // to the subscription context, that user receives the message.
+      subscribe: (root, args, { pubsub, user }) => pubsub.subscribe(user.id)
+    }
+  }
+}
+
+app.register(GQL, {
+  schema,
+  resolvers,
+  subscription: {
+      // Add the decoded JWT from the Authorization header to the subscription context.
+      context: (_, req) => ({ user: jwt.verify(req.headers["Authorization"].slice(7))})
+  }
+})
+...
+```
+
 ### Subscription support (with redis)
 
 ```js
@@ -596,43 +631,177 @@ app.listen(3000)
 A GraphQL server can act as a Gateway that composes the schemas of the underlying services into one federated schema and executes queries across the services. Every underlying service must be a GraphQL server that supports the federation.
 
 In Gateway mode the following options are not allowed (the plugin will throw an error if any of them are defined):
-* `schema`
-* `resolvers`
-* `loaders`
+
+- `schema`
+- `resolvers`
+- `loaders`
 
 Also, using the following decorator methods will throw:
-* `app.graphql.defineResolvers`
-* `app.graphql.defineLoaders`
-* `app.graphql.replaceSchema`
-* `app.graphql.extendSchema`
+
+- `app.graphql.defineResolvers`
+- `app.graphql.defineLoaders`
+- `app.graphql.extendSchema`
 
 ```js
 const gateway = Fastify()
+const GQL = require('fastify-gql')
 
 gateway.register(GQL, {
   gateway: {
-    services: [{
-      name: 'user',
-      url: 'http://localhost:4001/graphql',
-      rewriteHeaders: (headers) => {
-        if (headers.authorization) {
+    services: [
+      {
+        name: 'user',
+        url: 'http://localhost:4001/graphql',
+        rewriteHeaders: (headers) => {
+          if (headers.authorization) {
+            return {
+              authorization: headers.authorization
+            }
+          }
+
           return {
-            authorization: headers.authorization
+            'x-api-key': 'secret-api-key'
           }
         }
-
-        return {
-          x-api-key: 'secret-api-key'
-        }
+      },
+      {
+        name: 'post',
+        url: 'http://localhost:4002/graphql'
       }
-    }, {
-      name: 'post',
-      url: 'http://localhost:4002/graphql'
-    }]
+    ]
   }
 })
 
 await gateway.listen(4000)
+```
+
+#### Periodically refresh federated schemas in Gateway mode
+
+The Gateway service can obtain new versions of federated schemas automatically within a defined polling interval using the following configuration:
+
+- `gateway.pollingInterval` defines the interval (in milliseconds) the gateway should use in order to look for schema changes from the federated services. If the received schema is unchanged, the previously cached version will be reused.
+
+```js
+const gateway = Fastify();
+const GQL = require("fastify-gql");
+
+gateway.register(GQL, {
+  gateway: {
+    services: [
+      {
+        name: "user",
+        url: `http://localhost:3000/graphql`,
+      },
+    ],
+    pollingInterval: 2000,
+  },
+});
+
+gateway.listen(3001);
+```
+
+#### Programmatically refresh federated schemas in Gateway mode
+
+The service acting as the Gateway can manually trigger re-fetching the federated schemas programmatically by calling the `application.graphql.gateway.refresh()` method. The method either returns the newly generated schema or `null` if no changes have been discovered.
+
+```js
+const Fastify = require("fastify");
+const GQL = require("fastify-gql");
+
+const server = Fastify();
+
+server.register(GQL, {
+  graphiql: "playground",
+  gateway: {
+    services: [
+      {
+        name: "user",
+        url: "http://localhost:3000/graphql",
+      },
+      {
+        name: "company",
+        url: "http://localhost:3001/graphql",
+      },
+    ],
+  },
+});
+
+server.listen(3002);
+
+setTimeout(async () => {
+  const schema = await server.graphql.gateway.refresh();
+
+  if (schema !== null) {
+    server.graphql.replaceSchema(schema);
+  }
+}, 10000);
+```
+
+#### Flag a service as mandatory in Gateway mode
+
+A Gateway service can handle the federated services in 2 different modes, `mandatory` or not by utilizing the `gateway.services.mandatory` configuration flag. If a service is not considered mandatory, creating the federated schema will succeed even if the service isn't capable of delivering a schema. By default, all services are consideredmandatory. Note: At least 1 service is necessary in order to create a valid federated schema.
+
+```js
+const Fastify = require("fastify");
+const GQL = require("fastify-gql");
+
+const server = Fastify();
+
+server.register(GQL, {
+  graphiql: "playground",
+  gateway: {
+    services: [
+      {
+        name: "user",
+        url: "http://localhost:3000/graphql",
+        mandatory: true,
+      },
+      {
+        name: "company",
+        url: "http://localhost:3001/graphql",
+      },
+    ],
+  },
+  pollingInterval: 2000,
+});
+
+server.listen(3002);
+```
+
+#### Using a custom errorHandler for handling downstream service errors in Gateway mode
+
+Service which uses Gateway mode can process different types of issues that can be obtained from remote services (for example, Network Error, Downstream Error, etc.). A developer can provide a function (`gateway.errorHandler`) that can process these errors.
+
+```js
+const Fastify = require("fastify");
+const GQL = require("fastify-gql");
+
+const server = Fastify();
+
+server.register(GQL, {
+  graphiql: "playground",
+  gateway: {
+    services: [
+      {
+        name: "user",
+        url: "http://localhost:3000/graphql",
+        mandatory: true,
+      },
+      {
+        name: "company",
+        url: "http://localhost:3001/graphql",
+      },
+    ],
+  },
+  pollingInterval: 2000,
+  errorHandler: (error, service) => {
+    if (service.mandatory) {
+      logger.error(error);
+    }
+  },
+});
+
+server.listen(3002);
 ```
 
 ### Use errors extension to provide additional information to query errors
@@ -643,7 +812,7 @@ GraphQL services may provide an additional entry to errors with the key `extensi
 'use strict'
 
 const Fastify = require('fastify')
-const GQL = require('./index')
+const GQL = require('fastify-gql')
 const { ErrorWithProps } = GQL
 
 const users = {
@@ -719,6 +888,8 @@ __fastify-gql__ supports the following options:
 * `subscription`: Boolean | Object. Enable subscriptions. It is uses [mqemitter](https://github.com/mcollina/mqemitter) when it is true. To use a custom emitter set the value to an object containing the emitter.
   * `subscription.emitter`: Custom emitter
   * `subscription.verifyClient`: `Function` A function which can be used to validate incoming connections.
+  * `subscription.context`: `Function` Result of function is passed to subscription resolvers as a custom GraphQL context. The function receives the `connection` and `request` as parameters.
+  * `subscription.onConnect`: `Function` A function which can be used to validate the `connection_init` payload. If defined it should return a truthy value to authorize the connection. If it returns an object the subscription context will be extended with the returned object.
 * `federationMetadata`: Boolean. Enable federation metadata support so the service can be deployed behind an Apollo Gateway
 * `gateway`: Object. Run the GraphQL server in gateway mode.
   * `gateway.services`: Service[] An array of GraphQL services that are part of the gateway
@@ -740,6 +911,7 @@ __fastify-gql__ supports the following options:
 * `allowBatchedQueries`: Boolean. Flag to control whether to allow batched queries. When `true`, the server supports recieving an array of queries and returns an array of results.
 
 #### queryDepth example
+
 ```
 query {
   dogs {
@@ -759,6 +931,7 @@ query {
   }
 }
 ```
+
 A `queryDepth` of `6` would allow this query. `5` or less would throw with the error - `unnamedQuery query exceeds the query depth limit of 5`
 
 ### HTTP endpoints
@@ -797,6 +970,7 @@ payload must conform to the following JSON schema:
 ```
 
 For code from [example](#example) use:
+
 ```sh
 curl -H "Content-Type:application/json" -XPOST -d '{"query": "query { add(x: 2, y: 2) }"}' http://localhost:3000/graphql
 ```
@@ -807,6 +981,7 @@ Executes the GraphQL query or mutation described in the body. `operationName` an
 payload contains the GraphQL query.
 
 For code from [example](#example) use:
+
 ```sh
 curl -H "Content-Type:application/graphql" -XPOST -d "query { add(x: 2, y: 2) }" http://localhost:3000/graphql
 ```
@@ -820,7 +995,6 @@ the options.
 
 Serves [GraphQL IDE](https://www.npmjs.com/package/graphql-playground-react) if enabled by
 the options.
-
 
 ### decorators
 
@@ -1007,7 +1181,6 @@ GraphQL context, and it includes a `reply` object.
 
 Example:
 
-
 ```js
 const loaders = {
   Dog: {
@@ -1049,7 +1222,6 @@ app.register(GQL, {
 
 Disabling caching has the advantage to avoid the serialization at
 the cost of more objects to fetch in the resolvers.
-
 
 Internally, it uses
 [single-user-cache](http://npm.im/single-user-cache).
