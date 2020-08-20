@@ -126,6 +126,11 @@ export interface FastifyGQLCommonOptions {
    */
   routes?: boolean;
   /**
+   * Define if the plugin can cache the responses.
+   * @default true
+   */
+  cache?: boolean;
+  /**
    * An endpoint for graphql if routes is true
    * @default '/graphql'
    */
@@ -155,13 +160,11 @@ export interface FastifyGQLCommonOptions {
    * Change the default error formatter.
    */
   errorFormatter?: ((
-    error: FastifyError | GraphQLError | Error
+    execution: ExecutionResult,
+    context: any,
   ) => {
-    statusCode?: number
-    response?: {
-      data?: object
-      errors: any[]
-    }
+    statusCode: number,
+    response: ExecutionResult,
   });
   /**
    * The maximum depth allowed for a single query.
