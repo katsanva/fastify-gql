@@ -470,6 +470,7 @@ const plugin = fp(async function (app, opts) {
 })
 
 plugin.ErrorWithProps = ErrorWithProps
+plugin.defaultErrorFormatter = defaultErrorFormatter
 plugin.persistedQueryDefaults = persistedQueryDefaults
 
 module.exports = plugin

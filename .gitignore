@@ -66,4 +66,5 @@ typings/
 # vscode
 .vscode/
 
-.idea
+# intellij idea, webstorm
+.idea/
